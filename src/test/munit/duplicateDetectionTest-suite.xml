@@ -1,0 +1,295 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xsi:schemaLocation="
+http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd 
+        http://www.mulesoft.org/schema/mule/core
+        http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/munit
+        http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools
+        http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd">
+
+    <munit:config name="duplicateDetectionTest-suite.xml"/>
+
+
+    <!-- TEST 1: No Duplicate Employee IDs -->
+    <munit:test name="uniqueEmployeeIdTest"
+                description="Tests records with unique employee IDs">
+
+        <munit:execution>
+            <munit:set-event doc:name="Set Test Input">
+                <munit:payload
+                    value='#[{
+                        strategy: "REJECT",
+                        employees: [
+                            {employeeId: "EMP1001", firstName: "John"},
+                            {employeeId: "EMP1002", firstName: "David"}
+                        ],
+                        existingEmployees: []
+                    }]'
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="duplicateDetectionLogic"/>
+
+            <logger level="INFO"
+                    message="#[write(payload, 'application/json')]"
+                    doc:name="Log Test Output"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.totalRecords]"
+                is="#[MunitTools::equalTo(2)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.records[0].decision]"
+                is="#[MunitTools::equalTo('INSERT')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.records[1].decision]"
+                is="#[MunitTools::equalTo('INSERT')]"/>
+        </munit:validation>
+    </munit:test>
+
+
+    <!-- TEST 2: Identical Duplicate Employee IDs -->
+    <munit:test name="identicalDuplicateEmployeeIdTest"
+                description="Keeps first identical record and rejects subsequent occurrences">
+
+        <munit:execution>
+            <munit:set-event doc:name="Set Test Input">
+                <munit:payload
+                    value='#[{
+                        strategy: "REJECT",
+                        employees: [
+                            {employeeId: "EMP2001", firstName: "John", departmentCode: "IT"},
+                            {employeeId: "EMP2001", firstName: "John", departmentCode: "IT"}
+                        ],
+                        existingEmployees: []
+                    }]'
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="duplicateDetectionLogic"/>
+
+            <logger level="INFO"
+                    message="#[write(payload, 'application/json')]"
+                    doc:name="Log Test Output"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.records[0].decision]"
+                is="#[MunitTools::equalTo('INSERT')]"
+                message="First identical record should be retained"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.records[1].decision]"
+                is="#[MunitTools::equalTo('REJECT')]"
+                message="Second identical record should be rejected"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.records[1].rejectCode]"
+                is="#[MunitTools::equalTo('DUPLICATE_IDENTICAL_RECORD')]"/>
+        </munit:validation>
+    </munit:test>
+
+
+    <!-- TEST 3: Conflicting Employee Records -->
+    <munit:test name="conflictingEmployeeRecordsTest"
+                description="Rejects all records when the same employee ID has conflicting data">
+
+        <munit:execution>
+            <munit:set-event doc:name="Set Test Input">
+                <munit:payload
+                    value='#[{
+                        strategy: "REJECT",
+                        employees: [
+                            {employeeId: "EMP3001", firstName: "John", departmentCode: "IT"},
+                            {employeeId: "EMP3001", firstName: "David", departmentCode: "HR"}
+                        ],
+                        existingEmployees: []
+                    }]'
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="duplicateDetectionLogic"/>
+
+            <logger level="INFO"
+                    message="#[write(payload, 'application/json')]"
+                    doc:name="Log Test Output"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.records[0].decision]"
+                is="#[MunitTools::equalTo('REJECT')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.records[1].decision]"
+                is="#[MunitTools::equalTo('REJECT')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.records[0].rejectCode]"
+                is="#[MunitTools::equalTo('CONFLICTING_EMPLOYEE_RECORDS')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.records[1].rejectCode]"
+                is="#[MunitTools::equalTo('CONFLICTING_EMPLOYEE_RECORDS')]"/>
+        </munit:validation>
+    </munit:test>
+
+
+    <!-- TEST 4: INSERT Strategy with Existing Database ID -->
+    <munit:test name="insertStrategyExistingEmployeeTest"
+                description="Rejects an existing employee ID under INSERT strategy">
+
+        <munit:execution>
+            <munit:set-event doc:name="Set Test Input">
+                <munit:payload
+                    value='#[{
+                        strategy: "INSERT",
+                        employees: [
+                            {employeeId: "EMP4001", firstName: "John"}
+                        ],
+                        existingEmployees: [
+                            {employeeId: "EMP4001"}
+                        ]
+                    }]'
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="duplicateDetectionLogic"/>
+
+            <logger level="INFO"
+                    message="#[write(payload, 'application/json')]"
+                    doc:name="Log Test Output"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.records[0].decision]"
+                is="#[MunitTools::equalTo('REJECT')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.records[0].rejectCode]"
+                is="#[MunitTools::equalTo('EMPLOYEE_ID_ALREADY_EXISTS')]"/>
+        </munit:validation>
+    </munit:test>
+
+
+    <!-- TEST 5: UPDATE Strategy with Existing Database ID -->
+    <munit:test name="updateStrategyExistingEmployeeTest"
+                description="Updates an existing employee ID under UPDATE strategy">
+
+        <munit:execution>
+            <munit:set-event doc:name="Set Test Input">
+                <munit:payload
+                    value='#[{
+                        strategy: "UPDATE",
+                        employees: [
+                            {employeeId: "EMP5001", firstName: "John"}
+                        ],
+                        existingEmployees: [
+                            {employeeId: "EMP5001"}
+                        ]
+                    }]'
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="duplicateDetectionLogic"/>
+
+            <logger level="INFO"
+                    message="#[write(payload, 'application/json')]"
+                    doc:name="Log Test Output"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.records[0].decision]"
+                is="#[MunitTools::equalTo('UPDATE')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.records[0].existsInDatabase]"
+                is="#[MunitTools::equalTo(true)]"/>
+        </munit:validation>
+    </munit:test>
+
+
+    <!-- TEST 6: REJECT Strategy with Existing Database ID -->
+    <munit:test name="JAJkGrGC5QH8QXMzxKAaAjkaSWawKoNTE9xFSsbC3r7v"
+                description="Rejects an existing employee ID under REJECT strategy">
+
+        <munit:execution>
+            <munit:set-event doc:name="Set Test Input">
+                <munit:payload
+                    value='#[{
+                        strategy: "REJECT",
+                        employees: [
+                            {employeeId: "EMP6001", firstName: "John"}
+                        ],
+                        existingEmployees: [
+                            {employeeId: "EMP6001"}
+                        ]
+                    }]'
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="duplicateDetectionLogic"/>
+
+            <logger level="INFO"
+                    message="#[write(payload, 'application/json')]"
+                    doc:name="Log Test Output"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.records[0].decision]"
+                is="#[MunitTools::equalTo('REJECT')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.records[0].rejectCode]"
+                is="#[MunitTools::equalTo('EMPLOYEE_ID_ALREADY_EXISTS')]"/>
+        </munit:validation>
+    </munit:test>
+
+
+    <!-- TEST 7: UPDATE Strategy with New Employee ID -->
+    <munit:test name="updateStrategyNewEmployeeTest"
+                description="Inserts a new employee ID under UPDATE strategy">
+
+        <munit:execution>
+            <munit:set-event doc:name="Set Test Input">
+                <munit:payload
+                    value='#[{
+                        strategy: "UPDATE",
+                        employees: [
+                            {employeeId: "EMP7001", firstName: "John"}
+                        ],
+                        existingEmployees: []
+                    }]'
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="duplicateDetectionLogic"/>
+
+            <logger level="INFO"
+                    message="#[write(payload, 'application/json')]"
+                    doc:name="Log Test Output"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.records[0].decision]"
+                is="#[MunitTools::equalTo('INSERT')]"
+                message="New employee ID should be inserted even under UPDATE strategy"/>
+        </munit:validation>
+    </munit:test>
+
+</mule>

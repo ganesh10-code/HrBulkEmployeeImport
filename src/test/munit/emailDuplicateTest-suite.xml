@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+      http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+      http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+      http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd">
+
+    <munit:config name="emailDuplicateTest-suite"/>
+
+    <!-- TEST 1: Unique emails -->
+    <munit:test name="uniqueEmailsTest"
+                description="Accepts employees with unique email addresses">
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload
+                    value='#[{
+                        employees: [
+                            {employeeId: "EMP1001", officialEmail: "ganesh@company.com"},
+                            {employeeId: "EMP1002", officialEmail: "karthik@company.com"}
+                        ],
+                        existingEmployees: []
+                    }]'
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="emailDuplicateLogic"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.summary.totalValid]"
+                is="#[MunitTools::equalTo(2)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.summary.totalRejected]"
+                is="#[MunitTools::equalTo(0)]"/>
+        </munit:validation>
+    </munit:test>
+
+
+    <!-- TEST 2: Duplicate email within incoming file -->
+    <munit:test name="duplicateEmailInFileTest"
+                description="Rejects all records sharing an email in the input file">
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload
+                    value='#[{
+                        employees: [
+                            {employeeId: "EMP2001", officialEmail: "same@company.com"},
+                            {employeeId: "EMP2002", officialEmail: "same@company.com"}
+                        ],
+                        existingEmployees: []
+                    }]'
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="emailDuplicateLogic"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.summary.totalRejected]"
+                is="#[MunitTools::equalTo(2)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.rejectedRecords[0].rejectCode]"
+                is="#[MunitTools::equalTo('DUPLICATE_EMAIL_IN_FILE')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.rejectedRecords[1].rejectCode]"
+                is="#[MunitTools::equalTo('DUPLICATE_EMAIL_IN_FILE')]"/>
+        </munit:validation>
+    </munit:test>
+
+
+    <!-- TEST 3: Email belongs to another database employee -->
+    <munit:test name="emailAlreadyAssignedTest"
+                description="Rejects an email owned by another database employee">
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload
+                    value='#[{
+                        employees: [
+                            {employeeId: "EMP3001", officialEmail: "existing@company.com"}
+                        ],
+                        existingEmployees: [
+                            {employeeId: "EMP3002", officialEmail: "existing@company.com"}
+                        ]
+                    }]'
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="emailDuplicateLogic"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.summary.totalRejected]"
+                is="#[MunitTools::equalTo(1)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.rejectedRecords[0].rejectCode]"
+                is="#[MunitTools::equalTo('EMAIL_ALREADY_ASSIGNED')]"/>
+        </munit:validation>
+    </munit:test>
+
+
+    <!-- TEST 4: Employee retains own email -->
+    <munit:test name="sameEmployeeRetainsEmailTest"
+                description="Allows an employee to retain their own database email">
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload
+                    value='#[{
+                        employees: [
+                            {employeeId: "EMP4001", officialEmail: "ganesh@company.com"}
+                        ],
+                        existingEmployees: [
+                            {employeeId: "EMP4001", officialEmail: "ganesh@company.com"}
+                        ]
+                    }]'
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="emailDuplicateLogic"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.summary.totalValid]"
+                is="#[MunitTools::equalTo(1)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.summary.totalRejected]"
+                is="#[MunitTools::equalTo(0)]"/>
+        </munit:validation>
+    </munit:test>
+
+
+    <!-- TEST 5: Case-insensitive and whitespace normalization -->
+    <munit:test name="emailNormalizationTest"
+                description="Compares emails without case or surrounding whitespace differences">
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload
+                    value='#[{
+                        employees: [
+                            {employeeId: "EMP5001", officialEmail: "  GANESH@COMPANY.COM  "}
+                        ],
+                        existingEmployees: [
+                            {employeeId: "EMP5001", officialEmail: "ganesh@company.com"}
+                        ]
+                    }]'
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="emailDuplicateLogic"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.summary.totalValid]"
+                is="#[MunitTools::equalTo(1)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.summary.totalRejected]"
+                is="#[MunitTools::equalTo(0)]"/>
+        </munit:validation>
+    </munit:test>
+
+</mule>

@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd 
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd 
+        http://www.mulesoft.org/schema/mule/core
+        http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http
+        http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/ee/core
+        http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <configuration-properties
+        doc:name="Configuration properties"
+        file="config.properties"/>
+
+    <http:listener-config
+        name="HTTP_Listener_config"
+        doc:name="HTTP Listener config">
+
+        <http:listener-connection
+            host="0.0.0.0"
+            port="8081"/>
+    </http:listener-config>
+
+
+    <!-- MAIN HTTP FLOW -->
+    <flow name="duplicateDetectionFlow">
+
+        <http:listener
+            doc:name="Listener"
+            path="/duplicates"
+            allowedMethods="POST"
+            config-ref="HTTP_Listener_config"/>
+
+        <flow-ref
+            name="duplicateDetectionLogic"
+            doc:name="Call Duplicate Detection Logic"/>
+
+        <logger
+            level="INFO"
+            message="#[write(payload, 'application/json')]"
+            doc:name="Log Duplicate Detection Result"/>
+
+    </flow>
+
+
+    <!-- REUSABLE DUPLICATE DETECTION LOGIC -->
+    <sub-flow name="duplicateDetectionLogic">
+
+        <ee:transform doc:name="Employee ID Duplicate Detection">
+
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+
+var employees = payload.employees default []
+var existingEmployees = payload.existingEmployees default []
+var strategy = upper(payload.strategy default "REJECT")
+
+var employeeGroups =
+    employees groupBy ((employee) -> employee.employeeId)
+
+var existingIds =
+    existingEmployees map ((employee) -> employee.employeeId)
+
+---
+{
+    strategy: strategy,
+    totalRecords: sizeOf(employees),
+
+    records: employees map ((employee, index) -> do {
+
+        var employeeId = employee.employeeId
+        var employeeGroup = employeeGroups[employeeId]
+
+        var isDuplicateInFile =
+            sizeOf(employeeGroup) > 1
+
+        var distinctRecords =
+            employeeGroup distinctBy ((item) -> item)
+
+        var isConflicting =
+            sizeOf(distinctRecords) > 1
+
+        var previousOccurrences =
+            sizeOf(
+                employees filter ((item, itemIndex) ->
+                    itemIndex < index and
+                    item.employeeId == employeeId
+                )
+            )
+
+        // Single source of truth for identical duplicates
+        var debugRepeated =
+            isDuplicateInFile
+            and (not isConflicting)
+            and (previousOccurrences > 0)
+
+        var existsInDatabase =
+            existingIds contains employeeId
+
+        // Decision logic
+        var decision =
+            if (isConflicting)
+                "REJECT"
+            else if (debugRepeated)
+                "REJECT"
+            else if (existsInDatabase and strategy == "UPDATE")
+                "UPDATE"
+            else if (existsInDatabase)
+                "REJECT"
+            else
+                "INSERT"
+
+        // Rejection code
+        var rejectCode =
+            if (isConflicting)
+                "CONFLICTING_EMPLOYEE_RECORDS"
+            else if (debugRepeated)
+                "DUPLICATE_IDENTICAL_RECORD"
+            else if (existsInDatabase and decision == "REJECT")
+                "EMPLOYEE_ID_ALREADY_EXISTS"
+            else
+                null
+
+        // Rejection reason
+        var rejectReason =
+            if (isConflicting)
+                "Multiple records with the same employee ID contain conflicting employee data."
+            else if (debugRepeated)
+                "An identical employee record with this employee ID has already appeared in the file."
+            else if (existsInDatabase and decision == "REJECT")
+                "Employee ID already exists in the database."
+            else
+                null
+
+        ---
+        {
+            recordIndex: index + 1,
+            employeeId: employeeId,
+            isDuplicateInFile: isDuplicateInFile,
+            existsInDatabase: existsInDatabase,
+            decision: decision,
+            rejectCode: rejectCode,
+            rejectReason: rejectReason
+        }
+    })
+}
+]]></ee:set-payload>
+            </ee:message>
+
+        </ee:transform>
+
+    </sub-flow>
+
+</mule>

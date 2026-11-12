@@ -1,0 +1,305 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xsi:schemaLocation="
+http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd 
+        http://www.mulesoft.org/schema/mule/core
+        http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/munit
+        http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools
+        http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd">
+
+    <munit:config name="managerHierarchyTest-suite.xml"/>
+
+    <!-- TEST 1: Direct Circular Reporting -->
+    <munit:test name="directCircularReportingTest"
+                description="Tests direct circular manager references">
+
+        <munit:execution>
+            <munit:set-event doc:name="Set Test Input">
+                <munit:payload
+                    value='#[{
+                        employees: [
+                            {employeeId: "EMP2001", managerId: "EMP2002"},
+                            {employeeId: "EMP2002", managerId: "EMP2001"}
+                        ],
+                        existingEmployees: []
+                    }]'
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="managerHierarchyLogic"/>
+
+            <logger level="INFO"
+                    message="#[write(payload, 'application/json')]"
+                    doc:name="Log Manager Hierarchy Output"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.summary.totalRejected]"
+                is="#[MunitTools::equalTo(2)]"
+                message="Both employees should be rejected"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.rejectedRecords[0].rejectCode]"
+                is="#[MunitTools::equalTo('CIRCULAR_MANAGER_REFERENCE')]"
+                message="First employee should have circular reporting rejection"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.rejectedRecords[1].rejectCode]"
+                is="#[MunitTools::equalTo('CIRCULAR_MANAGER_REFERENCE')]"
+                message="Second employee should have circular reporting rejection"/>
+        </munit:validation>
+    </munit:test>
+
+
+    <!-- TEST 2: Self Manager -->
+    <munit:test name="selfManagerTest"
+                description="Tests an employee reporting to themselves">
+
+        <munit:execution>
+            <munit:set-event doc:name="Set Test Input">
+                <munit:payload
+                    value='#[{
+                        employees: [
+                            {employeeId: "EMP3001", managerId: "EMP3001"}
+                        ],
+                        existingEmployees: []
+                    }]'
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="managerHierarchyLogic"/>
+
+            <logger level="INFO"
+                    message="#[write(payload, 'application/json')]"
+                    doc:name="Log Self Manager Output"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.summary.totalRejected]"
+                is="#[MunitTools::equalTo(1)]"
+                message="Self-manager employee should be rejected"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.rejectedRecords[0].rejectCode]"
+                is="#[MunitTools::equalTo('SELF_MANAGER')]"
+                message="Expected SELF_MANAGER rejection"/>
+        </munit:validation>
+    </munit:test>
+
+
+    <!-- TEST 3: Missing Manager -->
+    <munit:test name="missingManagerTest"
+                description="Tests an employee referencing a non-existent manager">
+
+        <munit:execution>
+            <munit:set-event doc:name="Set Test Input">
+                <munit:payload
+                    value='#[{
+                        employees: [
+                            {employeeId: "EMP4001", managerId: "EMP9999"}
+                        ],
+                        existingEmployees: []
+                    }]'
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="managerHierarchyLogic"/>
+
+            <logger level="INFO"
+                    message="#[write(payload, 'application/json')]"
+                    doc:name="Log Missing Manager Output"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.summary.totalRejected]"
+                is="#[MunitTools::equalTo(1)]"
+                message="Employee with missing manager should be rejected"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.rejectedRecords[0].employeeId]"
+                is="#[MunitTools::equalTo('EMP4001')]"
+                message="Expected EMP4001 to be rejected"/>
+        </munit:validation>
+    </munit:test>
+
+
+    <!-- TEST 4: Indirect Circular Reporting -->
+    <munit:test name="indirectCircularReportingTest"
+                description="Tests an indirect circular reporting hierarchy">
+
+        <munit:execution>
+            <munit:set-event doc:name="Set Test Input">
+                <munit:payload
+                    value='#[{
+                        employees: [
+                            {employeeId: "EMP5001", managerId: "EMP5002"},
+                            {employeeId: "EMP5002", managerId: "EMP5003"},
+                            {employeeId: "EMP5003", managerId: "EMP5001"}
+                        ],
+                        existingEmployees: []
+                    }]'
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="managerHierarchyLogic"/>
+
+            <logger level="INFO"
+                    message="#[write(payload, 'application/json')]"
+                    doc:name="Log Indirect Circular Output"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.summary.totalRejected]"
+                is="#[MunitTools::equalTo(3)]"
+                message="All three employees in the cycle should be rejected"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.rejectedRecords[0].rejectCode]"
+                is="#[MunitTools::equalTo('CIRCULAR_MANAGER_REFERENCE')]"
+                message="First employee should be rejected for circular reporting"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.rejectedRecords[1].rejectCode]"
+                is="#[MunitTools::equalTo('CIRCULAR_MANAGER_REFERENCE')]"
+                message="Second employee should be rejected for circular reporting"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.rejectedRecords[2].rejectCode]"
+                is="#[MunitTools::equalTo('CIRCULAR_MANAGER_REFERENCE')]"
+                message="Third employee should be rejected for circular reporting"/>
+        </munit:validation>
+    </munit:test>
+
+
+    <!-- TEST 5: Valid Forward Manager Reference -->
+    <munit:test name="forwardManagerReferenceTest"
+                description="Tests valid forward manager references">
+
+        <munit:execution>
+            <munit:set-event doc:name="Set Test Input">
+                <munit:payload
+                    value='#[{
+                        employees: [
+                            {employeeId: "EMP6001", managerId: "EMP6002"},
+                            {employeeId: "EMP6002", managerId: null}
+                        ],
+                        existingEmployees: []
+                    }]'
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="managerHierarchyLogic"/>
+
+            <logger level="INFO"
+                    message="#[write(payload, 'application/json')]"
+                    doc:name="Log Forward Reference Output"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.summary.totalValid]"
+                is="#[MunitTools::equalTo(2)]"
+                message="Both employees should be valid"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.summary.totalRejected]"
+                is="#[MunitTools::equalTo(0)]"
+                message="No employees should be rejected"/>
+        </munit:validation>
+    </munit:test>
+
+
+    <!-- TEST 6: Manager Exists in Database -->
+    <munit:test name="databaseManagerTest"
+                description="Tests manager reference to an existing database employee">
+
+        <munit:execution>
+            <munit:set-event doc:name="Set Test Input">
+                <munit:payload
+                    value='#[{
+                        employees: [
+                            {employeeId: "EMP7001", managerId: "EMP7002"}
+                        ],
+                        existingEmployees: [
+                            {employeeId: "EMP7002", managerId: null}
+                        ]
+                    }]'
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="managerHierarchyLogic"/>
+
+            <logger level="INFO"
+                    message="#[write(payload, 'application/json')]"
+                    doc:name="Log Database Manager Output"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.summary.totalValid]"
+                is="#[MunitTools::equalTo(1)]"
+                message="Employee should be valid because manager exists in database"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.summary.totalRejected]"
+                is="#[MunitTools::equalTo(0)]"
+                message="No employee should be rejected"/>
+        </munit:validation>
+    </munit:test>
+
+
+    <!-- TEST 7: Circular Reporting Involving Database Employee -->
+    <munit:test name="databaseCircularReportingTest"
+                description="Tests a circular hierarchy involving an existing database employee">
+
+        <munit:execution>
+            <munit:set-event doc:name="Set Test Input">
+                <munit:payload
+                    value='#[{
+                        employees: [
+                            {employeeId: "EMP8001", managerId: "EMP8002"}
+                        ],
+                        existingEmployees: [
+                            {employeeId: "EMP8002", managerId: "EMP8001"}
+                        ]
+                    }]'
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="managerHierarchyLogic"/>
+
+            <logger level="INFO"
+                    message="#[write(payload, 'application/json')]"
+                    doc:name="Log Database Circular Output"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.summary.totalRejected]"
+                is="#[MunitTools::equalTo(1)]"
+                message="Incoming employee involved in database circular hierarchy should be rejected"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.rejectedRecords[0].employeeId]"
+                is="#[MunitTools::equalTo('EMP8001')]"
+                message="EMP8001 should be rejected"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.rejectedRecords[0].rejectCode]"
+                is="#[MunitTools::equalTo('CIRCULAR_MANAGER_REFERENCE')]"
+                message="Expected circular reporting rejection"/>
+        </munit:validation>
+    </munit:test>
+
+</mule>

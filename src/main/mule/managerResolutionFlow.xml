@@ -1,0 +1,291 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+	<flow name="managerHierarchyFlow" doc:id="3a9379c6-f96c-41dc-8512-d9706409700b" >
+		<http:listener doc:name="Listener" doc:id="4225deab-4fe5-431a-bc4c-154c3ac1c562" config-ref="HTTP_Listener_config" path="/manager-hierarchy"/>
+		<flow-ref name="managerHierarchyLogic" doc:name="Call Manager Hierarchy Logic"/>
+	</flow>
+	<sub-flow name="managerHierarchyLogic">
+	<ee:transform doc:name="Transform Message" doc:id="56785ae3-3a50-4964-a342-bac09431d62e" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+
+var employees = payload.employees default []
+var existingEmployees = payload.existingEmployees default []
+
+// Combine DB and incoming employees.
+// Incoming records take precedence for an employee being updated.
+var allEmployees =
+    existingEmployees ++ employees
+
+// Collect all known employee IDs.
+var allEmployeeIds =
+    allEmployees map ((employee) ->
+        employee.employeeId as String
+    )
+
+// Build employeeId -> managerId relationship map.
+// Incoming employee records override existing DB records.
+var managerMap =
+    allEmployees reduce ((employee, result = {}) ->
+        result ++ {
+            ((employee.employeeId as String)):
+                employee.managerId
+        }
+    )
+
+// Follow the reporting chain to check whether it returns
+// to the employee whose hierarchy is being checked.
+fun isInCycle(
+    startId: String,
+    currentId: String,
+    visited: Array<String>,
+    relationships: Object
+): Boolean =
+    do {
+        var nextManager =
+            relationships[currentId] default null
+        ---
+        if (nextManager == null or
+            trim(nextManager as String) == "")
+            false
+        else if ((nextManager as String) == startId)
+            true
+		else if (contains(visited, nextManager as String))
+    		false
+        else
+            isInCycle(
+                startId,
+                nextManager as String,
+                visited ++ [currentId],
+                relationships
+            )
+    }
+
+// Validate incoming employees.
+var processedRecords =
+    employees map ((employee, index) -> do {
+
+        var employeeId =
+            employee.employeeId as String
+
+        var managerId =
+            if (employee.managerId == null)
+                ""
+            else
+                trim(employee.managerId as String)
+
+        var isSelfManager =
+            managerId != "" and
+            managerId == employeeId
+
+        var managerExists =
+    		managerId == "" or
+    		contains(allEmployeeIds, managerId)
+
+        var isCircular =
+            if (managerId == "" or
+                isSelfManager or
+                not managerExists)
+                false
+            else
+                isInCycle(
+                    employeeId,
+                    employeeId,
+                    [employeeId],
+                    managerMap
+                )
+
+        var rejectCode =
+            if (isSelfManager)
+                "SELF_MANAGER"
+            else if (not managerExists)
+                "MANAGER_NOT_FOUND"
+            else if (isCircular)
+                "CIRCULAR_MANAGER_REFERENCE"
+            else
+                null
+
+        var rejectReason =
+            if (rejectCode == "SELF_MANAGER")
+                "Employee cannot be their own manager."
+            else if (rejectCode == "MANAGER_NOT_FOUND")
+                "Referenced manager does not exist in incoming records or database."
+            else if (rejectCode == "CIRCULAR_MANAGER_REFERENCE")
+                "Employee is part of a circular reporting hierarchy."
+            else
+                null
+
+        ---
+        {
+            recordIndex: index + 1,
+            employeeId: employeeId,
+            managerId: managerId,
+            managerStatus:
+                if (rejectCode == null)
+                    "VALID"
+                else
+                    "REJECT",
+            rejectCode: rejectCode,
+            rejectReason: rejectReason
+        }
+    })
+
+---
+{
+    totalRecords: sizeOf(employees),
+
+    validRecords:
+        processedRecords filter ((record) ->
+            record.managerStatus == "VALID"
+        ),
+
+    rejectedRecords:
+        processedRecords
+            filter ((record) ->
+                record.managerStatus == "REJECT"
+            )
+            map ((record) -> {
+                recordIndex: record.recordIndex,
+                employeeId: record.employeeId,
+                rejectCode: record.rejectCode,
+                rejectReason: record.rejectReason
+            }),
+
+    summary: {
+        totalValid:
+            sizeOf(processedRecords filter ((record) ->
+                record.managerStatus == "VALID"
+            )),
+
+        totalRejected:
+            sizeOf(processedRecords filter ((record) ->
+                record.managerStatus == "REJECT"
+            ))
+    }
+}
+]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+	</sub-flow>
+	<flow name="managerResolutionFlow">
+
+        <http:listener
+            doc:name="Listener"
+            config-ref="HTTP_Listener_config"
+            path="/managers"/>
+
+        <flow-ref
+            name="managerResolutionLogic"
+            doc:name="Call Manager Resolution Logic"/>
+
+        <logger
+            level="INFO"
+            doc:name="Logger"
+            message="Manager Resolution result: #[payload]"/>
+
+    </flow>
+
+
+    <!-- Reusable manager resolution logic -->
+    <sub-flow name="managerResolutionLogic">
+
+        <ee:transform doc:name="Resolve Manager References">
+
+            <ee:message>
+                <ee:set-payload><![CDATA[
+%dw 2.0
+output application/json
+
+var employees = payload.employees default []
+var existingEmployees = payload.existingEmployees default []
+
+// PASS 1: Collect all employee IDs
+var incomingEmployeeIds =
+    employees map ((employee) -> employee.employeeId)
+
+var existingEmployeeIds =
+    existingEmployees map ((employee) -> employee.employeeId)
+
+var allKnownEmployeeIds =
+    incomingEmployeeIds ++ existingEmployeeIds
+
+// PASS 2: Evaluate each employee's manager reference
+var processedRecords =
+    employees map ((employee, index) -> do {
+
+        var managerId = employee.managerId default null
+
+        var managerExists =
+            if (managerId == null)
+                true
+            else
+                allKnownEmployeeIds contains managerId
+
+        ---
+        {
+            recordIndex: index + 1,
+            employeeId: employee.employeeId,
+            managerId: managerId,
+            hasManager: managerId != null,
+            managerExists: managerExists,
+            status:
+                if (managerExists)
+                    "VALID"
+                else
+                    "REJECT",
+            rejectCode:
+                if (managerExists)
+                    null
+                else
+                    "MANAGER_NOT_FOUND",
+            rejectReason:
+                if (managerExists)
+                    null
+                else
+                    "Manager ID does not exist in the incoming file or database."
+        }
+    })
+
+// Separate valid and rejected records
+var validRecords =
+    processedRecords filter ((record) ->
+        record.status == "VALID"
+    )
+
+var rejectedRecords =
+    processedRecords
+        filter ((record) -> record.status == "REJECT")
+        map ((record) -> {
+            recordIndex: record.recordIndex,
+            employeeId: record.employeeId,
+            managerId: record.managerId,
+            rejectCode: record.rejectCode,
+            rejectReason: record.rejectReason
+        })
+
+---
+{
+    totalRecords: sizeOf(employees),
+
+    validRecords: validRecords,
+
+    rejectedRecords: rejectedRecords,
+
+    summary: {
+        totalValid: sizeOf(validRecords),
+        totalRejected: sizeOf(rejectedRecords)
+    }
+}
+                ]]></ee:set-payload>
+            </ee:message>
+
+        </ee:transform>
+
+    </sub-flow>
+</mule>

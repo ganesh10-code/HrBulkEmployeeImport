@@ -1,0 +1,224 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+      http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+      http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+      http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd">
+
+    <munit:config name="rejectionThresholdTest-suite"/>
+
+
+    <!-- TEST 1: Below threshold -->
+    <munit:test name="belowThresholdTest"
+                description="Continues processing when rejection percentage is below threshold">
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload
+                    value='#[{
+                        validRecords: [
+                            {employeeId: "EMP1001"},
+                            {employeeId: "EMP1002"},
+                            {employeeId: "EMP1003"},
+                            {employeeId: "EMP1004"},
+                            {employeeId: "EMP1005"},
+                            {employeeId: "EMP1006"},
+                            {employeeId: "EMP1007"},
+                            {employeeId: "EMP1008"},
+                            {employeeId: "EMP1009"}
+                        ],
+                        rejectedRecords: [
+                            {employeeId: "EMP1010", rejectCode: "INVALID_EMAIL"}
+                        ]
+                    }]'
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="rejectionThresholdLogic"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.rejectionPercentage]"
+                is="#[MunitTools::equalTo(10)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.processingDecision]"
+                is="#[MunitTools::equalTo('CONTINUE')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.persistenceAllowed]"
+                is="#[MunitTools::equalTo(true)]"/>
+        </munit:validation>
+    </munit:test>
+
+
+    <!-- TEST 2: Exactly equal to threshold -->
+    <munit:test name="exactThresholdTest"
+                description="Continues processing when rejection percentage equals threshold">
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload
+                    value='#[{
+                        validRecords: [
+                            {employeeId: "EMP2001"},
+                            {employeeId: "EMP2002"},
+                            {employeeId: "EMP2003"},
+                            {employeeId: "EMP2004"},
+                            {employeeId: "EMP2005"},
+                            {employeeId: "EMP2006"},
+                            {employeeId: "EMP2007"},
+                            {employeeId: "EMP2008"}
+                        ],
+                        rejectedRecords: [
+                            {employeeId: "EMP2009", rejectCode: "INVALID_EMAIL"},
+                            {employeeId: "EMP2010", rejectCode: "INVALID_DEPARTMENT"}
+                        ]
+                    }]'
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="rejectionThresholdLogic"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.rejectionPercentage]"
+                is="#[MunitTools::equalTo(20)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.processingDecision]"
+                is="#[MunitTools::equalTo('CONTINUE')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.persistenceAllowed]"
+                is="#[MunitTools::equalTo(true)]"/>
+        </munit:validation>
+    </munit:test>
+
+
+    <!-- TEST 3: Above threshold -->
+    <munit:test name="aboveThresholdTest"
+                description="Aborts processing when rejection percentage exceeds threshold">
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload
+                    value='#[{
+                        validRecords: [
+                            {employeeId: "EMP3001"},
+                            {employeeId: "EMP3002"},
+                            {employeeId: "EMP3003"},
+                            {employeeId: "EMP3004"},
+                            {employeeId: "EMP3005"},
+                            {employeeId: "EMP3006"},
+                            {employeeId: "EMP3007"}
+                        ],
+                        rejectedRecords: [
+                            {employeeId: "EMP3008", rejectCode: "INVALID_EMAIL"},
+                            {employeeId: "EMP3009", rejectCode: "INVALID_DEPARTMENT"},
+                            {employeeId: "EMP3010", rejectCode: "DUPLICATE_EMPLOYEE_ID"}
+                        ]
+                    }]'
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="rejectionThresholdLogic"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.rejectionPercentage]"
+                is="#[MunitTools::equalTo(30)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.processingDecision]"
+                is="#[MunitTools::equalTo('ABORT')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.persistenceAllowed]"
+                is="#[MunitTools::equalTo(false)]"/>
+        </munit:validation>
+    </munit:test>
+
+
+    <!-- TEST 4: Zero rejected records -->
+    <munit:test name="zeroRejectedRecordsTest"
+                description="Continues processing when there are no rejected records">
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload
+                    value='#[{
+                        validRecords: [
+                            {employeeId: "EMP4001"},
+                            {employeeId: "EMP4002"},
+                            {employeeId: "EMP4003"}
+                        ],
+                        rejectedRecords: []
+                    }]'
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="rejectionThresholdLogic"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.rejectionPercentage]"
+                is="#[MunitTools::equalTo(0)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.processingDecision]"
+                is="#[MunitTools::equalTo('CONTINUE')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.persistenceAllowed]"
+                is="#[MunitTools::equalTo(true)]"/>
+        </munit:validation>
+    </munit:test>
+
+
+    <!-- TEST 5: All records rejected -->
+    <munit:test name="allRecordsRejectedTest"
+                description="Aborts processing when all records are rejected">
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload
+                    value='#[{
+                        validRecords: [],
+                        rejectedRecords: [
+                            {employeeId: "EMP5001", rejectCode: "INVALID_EMAIL"},
+                            {employeeId: "EMP5002", rejectCode: "INVALID_DEPARTMENT"},
+                            {employeeId: "EMP5003", rejectCode: "DUPLICATE_EMPLOYEE_ID"}
+                        ]
+                    }]'
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="rejectionThresholdLogic"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.rejectionPercentage]"
+                is="#[MunitTools::equalTo(100)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.processingDecision]"
+                is="#[MunitTools::equalTo('ABORT')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.persistenceAllowed]"
+                is="#[MunitTools::equalTo(false)]"/>
+        </munit:validation>
+    </munit:test>
+
+</mule>

@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+      http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+      http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+      http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd">
+
+    <munit:config name="managerResolutionTest-suite"/>
+
+
+    <!-- TEST 1: Manager exists in incoming file -->
+    <munit:test name="managerExistsInFileTest"
+                description="Resolves a manager who is present in the incoming file">
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload
+                    value='#[{
+                        employees: [
+                            {employeeId: "EMP1001", managerId: "EMP1002"},
+                            {employeeId: "EMP1002", managerId: null}
+                        ],
+                        existingEmployees: []
+                    }]'
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="managerResolutionLogic"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.summary.totalValid]"
+                is="#[MunitTools::equalTo(2)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.summary.totalRejected]"
+                is="#[MunitTools::equalTo(0)]"/>
+        </munit:validation>
+    </munit:test>
+
+
+    <!-- TEST 2: Forward manager reference -->
+    <munit:test name="forwardManagerReferenceTest"
+                description="Resolves a manager appearing later in the incoming file">
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload
+                    value='#[{
+                        employees: [
+                            {employeeId: "EMP2001", managerId: "EMP2003"},
+                            {employeeId: "EMP2002", managerId: "EMP2003"},
+                            {employeeId: "EMP2003", managerId: null}
+                        ],
+                        existingEmployees: []
+                    }]'
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="managerResolutionLogic"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.summary.totalValid]"
+                is="#[MunitTools::equalTo(3)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.summary.totalRejected]"
+                is="#[MunitTools::equalTo(0)]"/>
+        </munit:validation>
+    </munit:test>
+
+
+    <!-- TEST 3: Manager exists in database -->
+    <munit:test name="managerExistsInDatabaseTest"
+                description="Resolves a manager present in existing database employees">
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload
+                    value='#[{
+                        employees: [
+                            {employeeId: "EMP3001", managerId: "EMP9001"}
+                        ],
+                        existingEmployees: [
+                            {employeeId: "EMP9001"}
+                        ]
+                    }]'
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="managerResolutionLogic"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.summary.totalValid]"
+                is="#[MunitTools::equalTo(1)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.summary.totalRejected]"
+                is="#[MunitTools::equalTo(0)]"/>
+        </munit:validation>
+    </munit:test>
+
+
+    <!-- TEST 4: Manager does not exist -->
+    <munit:test name="managerNotFoundTest"
+                description="Rejects an employee whose manager does not exist">
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload
+                    value='#[{
+                        employees: [
+                            {employeeId: "EMP4001", managerId: "EMP9999"},
+                            {employeeId: "EMP4002", managerId: null}
+                        ],
+                        existingEmployees: []
+                    }]'
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="managerResolutionLogic"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.summary.totalValid]"
+                is="#[MunitTools::equalTo(1)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.summary.totalRejected]"
+                is="#[MunitTools::equalTo(1)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.rejectedRecords[0].rejectCode]"
+                is="#[MunitTools::equalTo('MANAGER_NOT_FOUND')]"/>
+        </munit:validation>
+    </munit:test>
+
+
+    <!-- TEST 5: No manager assigned -->
+    <munit:test name="noManagerAssignedTest"
+                description="Accepts employees with no manager assigned">
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload
+                    value='#[{
+                        employees: [
+                            {employeeId: "EMP5001", managerId: null},
+                            {employeeId: "EMP5002", managerId: null}
+                        ],
+                        existingEmployees: []
+                    }]'
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="managerResolutionLogic"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.summary.totalValid]"
+                is="#[MunitTools::equalTo(2)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.summary.totalRejected]"
+                is="#[MunitTools::equalTo(0)]"/>
+        </munit:validation>
+    </munit:test>
+
+</mule>

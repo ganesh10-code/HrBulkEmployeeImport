@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+      http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+      http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+      http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <!-- HTTP endpoint -->
+    <flow name="rejectionThresholdFlow">
+
+        <http:listener
+            doc:name="Listener"
+            config-ref="HTTP_Listener_config"
+            path="/rejection-threshold"/>
+
+        <flow-ref
+            name="rejectionThresholdLogic"
+            doc:name="Call Rejection Threshold Logic"/>
+
+    </flow>
+
+
+    <!-- Reusable rejection threshold logic -->
+    <sub-flow name="rejectionThresholdLogic">
+
+        <set-variable
+            value="#[p('employee.import.rejection.threshold') as Number]"
+            doc:name="Set Rejection Threshold"
+            variableName="rejectionThreshold"/>
+
+        <ee:transform doc:name="Calculate Rejection Percentage">
+
+            <ee:message>
+                <ee:set-payload><![CDATA[
+%dw 2.0
+output application/json
+
+// Read valid and rejected records
+var validRecords = payload.validRecords default []
+var rejectedRecords = payload.rejectedRecords default []
+
+// Calculate counts
+var totalValid = sizeOf(validRecords)
+var totalRejected = sizeOf(rejectedRecords)
+var totalRecords = totalValid + totalRejected
+
+// Read configured threshold
+var threshold = vars.rejectionThreshold
+
+// Calculate rejection percentage
+var rejectionPercentage =
+    if (totalRecords == 0)
+        0
+    else
+        round(((totalRejected / totalRecords) * 100) * 100) / 100
+
+// Compare percentage with threshold
+var shouldAbort =
+    rejectionPercentage > threshold
+
+---
+{
+    totalRecords: totalRecords,
+    totalValid: totalValid,
+    totalRejected: totalRejected,
+
+    rejectionPercentage: rejectionPercentage,
+    configuredThreshold: threshold,
+
+    processingDecision:
+        if (shouldAbort)
+            "ABORT"
+        else
+            "CONTINUE",
+
+    persistenceAllowed: !shouldAbort,
+
+    message:
+        if (shouldAbort)
+            "Rejection percentage exceeds the configured threshold. Import processing must be aborted before database persistence."
+        else
+            "Rejection percentage is within the configured threshold. Processing can continue to database persistence.",
+
+    validRecords: validRecords,
+    rejectedRecords: rejectedRecords
+}
+                ]]></ee:set-payload>
+            </ee:message>
+
+        </ee:transform>
+
+    </sub-flow>
+
+</mule>

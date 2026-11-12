@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+      http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+      http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+      http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <!-- HTTP endpoint -->
+    <flow name="emailDuplicationFlowFlow">
+
+        <http:listener
+            doc:name="Listener"
+            config-ref="HTTP_Listener_config"
+            path="/email-duplicates"/>
+
+        <flow-ref
+            name="emailDuplicateLogic"
+            doc:name="Call Email Duplicate Logic"/>
+
+    </flow>
+
+
+    <!-- Reusable email duplicate detection logic -->
+    <sub-flow name="emailDuplicateLogic">
+
+        <ee:transform doc:name="Email Duplicate Detection">
+
+            <ee:message>
+                <ee:set-payload><![CDATA[
+%dw 2.0
+output application/json
+
+var employees = payload.employees default []
+var existingEmployees = payload.existingEmployees default []
+
+// Normalize incoming email addresses
+var normalizedEmployees =
+    employees map ((employee, index) -> {
+        employee: employee,
+        recordIndex: index + 1,
+        normalizedEmail:
+            lower(trim((employee.officialEmail default "") as String))
+    })
+
+// Group records by normalized email
+var emailGroups =
+    normalizedEmployees
+        filter ((record) -> record.normalizedEmail != "")
+        groupBy ((record) -> record.normalizedEmail)
+
+// Evaluate each employee record
+var processedRecords =
+    normalizedEmployees map ((record) -> do {
+
+        var employee = record.employee
+        var email = record.normalizedEmail
+
+        // Find matching email addresses in the database
+        var matchingDatabaseRecords =
+            existingEmployees filter ((existing) ->
+                email != "" and
+                lower(trim((existing.officialEmail default "") as String))
+                    == email
+            )
+
+        // Check whether another employee owns the email
+        var emailOwnedByDifferentEmployee =
+            sizeOf(
+                matchingDatabaseRecords filter ((existing) ->
+                    existing.employeeId != employee.employeeId
+                )
+            ) > 0
+
+        // Check duplicate email within incoming file
+        var isDuplicateInFile =
+            if (email == "")
+                false
+            else
+                sizeOf(emailGroups[email] default []) > 1
+
+        // Decide rejection reason
+        var rejectCode =
+            if (isDuplicateInFile)
+                "DUPLICATE_EMAIL_IN_FILE"
+            else if (emailOwnedByDifferentEmployee)
+                "EMAIL_ALREADY_ASSIGNED"
+            else
+                null
+
+        var rejectReason =
+            if (rejectCode == "DUPLICATE_EMAIL_IN_FILE")
+                "Official email appears multiple times in the input file."
+            else if (rejectCode == "EMAIL_ALREADY_ASSIGNED")
+                "Official email already belongs to another employee."
+            else
+                null
+
+        ---
+        {
+            recordIndex: record.recordIndex,
+            employeeId: employee.employeeId,
+            emailStatus:
+                if (rejectCode == null) "VALID" else "REJECT",
+            rejectCode: rejectCode,
+            rejectReason: rejectReason
+        }
+    })
+
+// Final response
+---
+{
+    totalRecords: sizeOf(employees),
+
+    validRecords:
+        processedRecords filter ((record) ->
+            record.emailStatus == "VALID"
+        ),
+
+    rejectedRecords:
+        processedRecords
+            filter ((record) -> record.emailStatus == "REJECT")
+            map ((record) -> {
+                recordIndex: record.recordIndex,
+                employeeId: record.employeeId,
+                rejectCode: record.rejectCode,
+                rejectReason: record.rejectReason
+            }),
+
+    summary: {
+        totalValid:
+            sizeOf(processedRecords filter ((record) ->
+                record.emailStatus == "VALID"
+            )),
+
+        totalRejected:
+            sizeOf(processedRecords filter ((record) ->
+                record.emailStatus == "REJECT"
+            ))
+    }
+}
+                ]]></ee:set-payload>
+            </ee:message>
+
+        </ee:transform>
+
+    </sub-flow>
+
+</mule>
